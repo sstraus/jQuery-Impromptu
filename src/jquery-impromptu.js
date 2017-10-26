@@ -59,6 +59,7 @@
 		loaded: function(e){},
 		submit: function(e,v,m,f){},
 		close: function(e,v,m,f){},
+		beforeclose: function(e,v,m,f){},
 		statechanging: function(e, from, to){},
 		statechanged: function(e, to){},
 		opacity: 0.6,
@@ -80,6 +81,7 @@
 		},
 		persistent: true,
 		timeout: 0,
+		closeDelay: 10,
 		states: {},
 		initialState: 0,
 		state: {
@@ -100,8 +102,9 @@
 			},
 			submit: function(e,v,m,f){
 				return true;
-			}
-		}
+            },
+            oneAtATime: false
+        }
 	};
 
 	/**
@@ -126,6 +129,8 @@
 	* @var Int - A counter used to provide a unique ID for new prompts
 	*/
 	Imp.count = 0;
+
+    Imp.isOpen = false;
 
 	/**
 	* @var Array - An array of Impromptu intances in a LIFO queue (last in first out)
@@ -163,7 +168,7 @@
 		* @var Int - A unique id, simply an autoincremented number
 		*/
 		id: null,
-
+        
 		/**
 		* open - Opens the prompt
 		* @param message String/Object - String of html or Object of states
@@ -172,8 +177,10 @@
 		*/
 		open: function(message, options) {
 			var t = this;
+			t.options = $.extend(true,{},Imp.defaults,options);
 
-			t.options = $.extend({},Imp.defaults,options);
+            if(t.options.oneAtATime && Imp.isOpen) return;
+            Imp.isOpen = true;
 
 			// Be sure any previous timeouts are destroyed
 			if(t.timeout){
@@ -237,8 +244,8 @@
 					$state = $t.parents('.'+ opts.prefix +'state'),
 					statename = $state.data('jqi-name'),
 					stateobj = t.options.states[statename],
-					msg = $state.children('.'+ opts.prefix +'message'),
-					clicked = stateobj.buttons[$t.text()] || stateobj.buttons[$t.html()],
+                    msg = $state.children('.'+ opts.prefix +'message'),
+				    clicked = isNaN($t.text()) ? stateobj.buttons[$t.text()] || stateobj.buttons[$t.html()] : undefined,
 					forminputs = {};
 
 				// disable for a moment to prevent multiple clicks
@@ -252,10 +259,16 @@
 				// if for some reason we couldn't get the value
 				if(clicked === undefined){
 					for(var i in stateobj.buttons){
-						if(stateobj.buttons[i].title === $t.text() || stateobj.buttons[i].title === $t.html()){
+                        
+						if( $("<div/>").html(stateobj.buttons[i].title).text() === $t.text() || stateobj.buttons[i].title === $t.html()){
 							clicked = stateobj.buttons[i].value;
 						}
 					}
+				}
+
+				if (clicked === undefined)
+				{
+					clicked = $t.val();
 				}
 
 				//collect all form element values from all states.
@@ -359,6 +372,7 @@
 			t.jqi.find('.'+ opts.prefix +'form').submit(function(){ return false; });
 			t.jqib.on("keydown",keyDownEventHandler)
 						.on('impromptu:loaded', opts.loaded)
+						.on('impromptu:beforeclose', opts.beforeclose)
 						.on('impromptu:close', opts.close)
 						.on('impromptu:statechanging', opts.statechanging)
 						.on('impromptu:statechanged', opts.statechanged);
@@ -385,37 +399,43 @@
 
 		/**
 		* close - Closes the prompt
-		* @param callback Function - called when the transition is complete
+		* @param callCallback Function - called when the transition is complete
 		* @param clicked String - value of the button clicked (only used internally)
 		* @param msg jQuery - The state message body (only used internally)
-		* @param forvals Object - key/value pairs of all form field names and values (only used internally)
+		* @param formvals Object - key/value pairs of all form field names and values (only used internally)
 		* @return Imp - the instance of this Impromptu object
 		*/
 		close: function(callCallback, clicked, msg, formvals){
 			var t = this;
-			Imp.removeFromStack(t.id);
+			t.jqib.trigger('impromptu:beforeclose', [clicked,msg,formvals]);
 
 			if(t.timeout){
 				clearTimeout(t.timeout);
 				t.timeout = false;
 			}
+			Imp.removeFromStack(t.id);
 
-			if(t.jqib){
-				t.jqib[t.options.hide]('fast',function(){
-					
-					t.jqib.trigger('impromptu:close', [clicked,msg,formvals]);
-					
-					t.jqib.remove();
-					
-					$(window).off('resize', t._windowResize);
+			setTimeout(function(){
+				if(t.jqib){
 
-					if(typeof callCallback === 'function'){
-						callCallback();
-					}
-				});
-			}
-			t.currentStateName = "";
+					t.jqib[t.options.hide](t.options.promptspeed,function(){
 
+						t.jqib.trigger('impromptu:close', [clicked,msg,formvals]);
+
+						t.jqib.remove();
+
+						$(window).off('resize', t._windowResize);
+
+						if(typeof callCallback === 'function'){
+							callCallback();
+						}
+					});
+				}
+
+			}, t.options.closeDelay);
+
+            t.currentStateName = "";
+            Imp.isOpen = false;            
 			return t;
 		},
 
